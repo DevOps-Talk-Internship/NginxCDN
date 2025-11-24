@@ -1,6 +1,7 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import mariadb
 import sys
+import logging
 
 app = Flask(__name__)
 DB_CONFIG = {
@@ -12,10 +13,8 @@ DB_CONFIG = {
 }
 
 def get_db_connection():
-    """Establish a connection to the MariaDB database
-    """
+    """Establish a connection to the MariaDB database"""
     try:
-# Attempt to create a connection pool or direct connection
         conn = mariadb.connect(
             host=DB_CONFIG['host'],
             port=DB_CONFIG['port'],
@@ -30,24 +29,23 @@ def get_db_connection():
 
 @app.route('/health', methods=['GET'])
 def check_database_health():
-    """Endpoint to check database health with comprehensive error handling
-    """
+    """Endpoint to check database health with comprehensive error handling"""
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+
     try:
         conn = get_db_connection()
-# Check if connection failed
         if conn is None:
             return jsonify({
                 'status': 'error',
-                'message':'Unable to connect to the database',
-                'details': 'Connection could not be established'
+                'message': 'Unable to connect to the database',
+                'details': 'Connection could not be established',
+                'client_ip': client_ip
             }), 500
-        cursor = conn.cursor()
 
+        cursor = conn.cursor()
         try:
-# Comprehensive health check query
             cursor.execute("SELECT 1")
             result = cursor.fetchone()
-
             cursor.close()
             conn.close()
 
@@ -58,42 +56,43 @@ def check_database_health():
                     'details': {
                         'host': DB_CONFIG['host'],
                         'database': DB_CONFIG['database']
-                    }
+                    },
+                    'client_ip': client_ip
                 }), 200
 
         except mariadb.Error as query_error:
-# Handle query-specific errors
             return jsonify({
                 'status': 'error',
                 'message': 'Database query failed',
-                'details': str(query_error)
+                'details': str(query_error),
+                'client_ip': client_ip
             }), 500
 
     except Exception as e:
-# Catch-all for unexpected errors
         return jsonify({
             'status': 'critical',
             'message': 'Unexpected database error',
-            'details': str(e)
+            'details': str(e),
+            'client_ip': client_ip
         }), 500
 
-# Custom error handlers
 @app.errorhandler(mariadb.Error)
 def handle_database_error(error):
-    """
-    Global error handler for MariaDB specific errors
-    """
+    """Global error handler for MariaDB specific errors"""
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     return jsonify({
         'status': 'error',
         'message': 'Database system error',
-        'details': str(error)
+        'details': str(error),
+        'client_ip': client_ip
     }), 500
+
 # Logging configuration
-import logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
 # Application configuration
 app.config.update(
     DEBUG=True,
@@ -108,13 +107,11 @@ if __name__ == '__main__':
             test_conn.close()
         else:
             print("Warning: Could not establish initial database connection")
-        
+
         app.run(
             host='0.0.0.0',
-# Listen on all available interfaces
             port=5000,
             debug=True
-# Enable debug mode
         )
     except Exception as startup_error:
         print(f"Application startup failed: {startup_error}")
