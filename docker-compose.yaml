@@ -4,6 +4,7 @@ services:
     command: "--default-authentication-plugin=mysql_native_password"
     volumes:
       - ./data/db_data:/var/lib/mysql
+      - ./init:/docker-entrypoint-initdb.d
     restart: always
     environment:
       - MYSQL_ROOT_PASSWORD=1234
@@ -36,13 +37,15 @@ services:
   mariadb-exporter:
     image: prom/mysqld-exporter
     environment:
-      - DATA_SOURCE_NAME=root:1234@(db:3306)/ts
+      - DATA_SOURCE_NAME=exporter:exporter_pass@(db:3306)/
     ports:
       - "9104:9104"
     depends_on:
       - db
     networks:
-      - monitoring_network
+      monitoring_network:
+        aliases:
+          - mariadb-exporter
 
   grafana:
     image: grafana/grafana:latest
@@ -52,7 +55,6 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
-      #- GF_INSTALL_PLUGINS=
     restart: always
     ports:
       - "3000:3000"

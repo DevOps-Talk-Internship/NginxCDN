@@ -6,6 +6,9 @@ scrape_configs:
   - job_name: 'mariadb'
     static_configs:
       - targets: ['mariadb-exporter:9104']
+        labels:
+          instance: 'primary-db'
+          env: 'production'
 
   - job_name: 'prometheus'
     static_configs:
