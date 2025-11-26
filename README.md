@@ -6,9 +6,15 @@
 python3 -m venv venv
 #### Activate virtual environment (Linux)
 source ./venv/bin/activate
+<!-- 
+#### Install needed ubuntu deps
+sudo apt install -y libmariadb-dev -->
+
+<!-- #### Install Pip requirements
+pip install -r requirements.txt -->
 
 #### Install Pip requirements
-pip install -r requirements.txt
+pip install flask
 
 #### Running the docker-compose
 ##### Run these before running the docker-compose

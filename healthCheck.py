@@ -1,29 +1,20 @@
 from flask import Flask, jsonify, request
-import mariadb
+import sqlite3
 import sys
 import logging
+from typing import Optional
 
 app = Flask(__name__)
-DB_CONFIG = {
-    'host': '127.0.0.1',
-    'port': 3306,
-    'user': 'root',
-    'password': '1234',
-    'database': 'ts'
-}
 
-def get_db_connection():
-    """Establish a connection to the MariaDB database"""
+DB_PATH = 'health_checks.db'
+
+def get_db_connection() -> Optional[sqlite3.Connection]:
+    """Establish a connection to the SQLite database"""
     try:
-        conn = mariadb.connect(
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            database=DB_CONFIG['database']
-        )
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
         return conn
-    except mariadb.Error as e:
+    except sqlite3.Error as e:
         app.logger.error(f"Database Connection Error: {e}")
         return None
 
@@ -37,14 +28,14 @@ def ensure_schema():
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS health_checks (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                client_ip VARCHAR(45) NOT NULL,
-                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_ip TEXT NOT NULL,
+                checked_at TEXT DEFAULT (datetime('now'))
             )
         """)
         conn.commit()
         cur.close()
-    except mariadb.Error as e:
+    except sqlite3.Error as e:
         app.logger.error(f"Schema creation error: {e}")
     finally:
         conn.close()
@@ -84,8 +75,7 @@ def check_database_health():
                     'status': 'healthy',
                     'message': 'Database connection successful',
                     'details': {
-                        'host': DB_CONFIG['host'],
-                        'database': DB_CONFIG['database']
+                        'database_file': DB_PATH
                     },
                     'client_ip': client_ip
                 }), 200
@@ -96,7 +86,7 @@ def check_database_health():
                 'client_ip': client_ip
             }), 500
 
-        except mariadb.Error as query_error:
+        except sqlite3.Error as query_error:
             return jsonify({
                 'status': 'error',
                 'message': 'Database query failed',
@@ -140,16 +130,20 @@ def get_health_logs():
             'status': 'ok',
             'count': len(rows),
             'logs': [
-                {'id': r[0], 'client_ip': r[1], 'checked_at': r[2].isoformat()}
+                {
+                    'id': r['id'],
+                    'client_ip': r['client_ip'],
+                    'checked_at': r['checked_at']  # already a string like "YYYY-MM-DD HH:MM:SS"
+                }
                 for r in rows
             ]
         }), 200
-    except mariadb.Error as e:
+    except sqlite3.Error as e:
         return jsonify({'status': 'error', 'message': 'Query failed', 'details': str(e)}), 500
 
-@app.errorhandler(mariadb.Error)
+@app.errorhandler(sqlite3.Error)
 def handle_database_error(error):
-    """Global error handler for MariaDB specific errors"""
+    """Global error handler for SQLite specific errors"""
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     return jsonify({
         'status': 'error',
