@@ -5,11 +5,11 @@ import logging
 
 app = Flask(__name__)
 DB_CONFIG = {
-    'host': 'localhost',
+    'host': '127.0.0.1',
     'port': 3306,
-    'user': 'your_database_user',
-    'password': 'your_database_password',
-    'database': 'your_database_name'
+    'user': 'root',
+    'password': '1234',
+    'database': 'ts'
 }
 
 def get_db_connection():
@@ -27,9 +27,31 @@ def get_db_connection():
         app.logger.error(f"Database Connection Error: {e}")
         return None
 
+def ensure_schema():
+    """Create the table for logging client IPs if it doesn't exist"""
+    conn = get_db_connection()
+    if conn is None:
+        app.logger.error("Schema init failed: no DB connection")
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS health_checks (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                client_ip VARCHAR(45) NOT NULL,
+                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cur.close()
+    except mariadb.Error as e:
+        app.logger.error(f"Schema creation error: {e}")
+    finally:
+        conn.close()
+
 @app.route('/health', methods=['GET'])
 def check_database_health():
-    """Endpoint to check database health with comprehensive error handling"""
+    """Endpoint to check database health and log client IP"""
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
 
     try:
@@ -46,6 +68,14 @@ def check_database_health():
         try:
             cursor.execute("SELECT 1")
             result = cursor.fetchone()
+
+            # Log client IP
+            cursor.execute(
+                "INSERT INTO health_checks (client_ip) VALUES (?)",
+                (client_ip,)
+            )
+            conn.commit()
+
             cursor.close()
             conn.close()
 
@@ -59,6 +89,12 @@ def check_database_health():
                     },
                     'client_ip': client_ip
                 }), 200
+
+            return jsonify({
+                'status': 'error',
+                'message': 'Unexpected empty result from SELECT 1',
+                'client_ip': client_ip
+            }), 500
 
         except mariadb.Error as query_error:
             return jsonify({
@@ -75,6 +111,41 @@ def check_database_health():
             'details': str(e),
             'client_ip': client_ip
         }), 500
+
+@app.route('/health/logs', methods=['GET'])
+def get_health_logs():
+    """Return recent client IP logs"""
+    try:
+        limit = int(request.args.get('limit', 50))
+    except ValueError:
+        limit = 50
+
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify({'status': 'error', 'message': 'DB connection failed'}), 500
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, client_ip, checked_at
+            FROM health_checks
+            ORDER BY checked_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            'status': 'ok',
+            'count': len(rows),
+            'logs': [
+                {'id': r[0], 'client_ip': r[1], 'checked_at': r[2].isoformat()}
+                for r in rows
+            ]
+        }), 200
+    except mariadb.Error as e:
+        return jsonify({'status': 'error', 'message': 'Query failed', 'details': str(e)}), 500
 
 @app.errorhandler(mariadb.Error)
 def handle_database_error(error):
@@ -101,6 +172,7 @@ app.config.update(
 
 if __name__ == '__main__':
     try:
+        ensure_schema()
         test_conn = get_db_connection()
         if test_conn:
             print("Initial database connection successful")
